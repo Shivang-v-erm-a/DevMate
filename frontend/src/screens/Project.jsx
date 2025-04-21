@@ -5,19 +5,16 @@ import axios from '../config/axios'
 import { initializeSocket, receiveMessage, sendMessage } from '../config/socket'
 import Markdown from 'markdown-to-jsx'
 import hljs from 'highlight.js'
-import 'highlight.js/styles/nord.min.css' // Import a style directly
+import 'highlight.js/styles/nord.min.css'
 import { getWebContainer } from '../config/webcontainer'
-
+import { motion } from 'framer-motion' // Using same animation library as Home
 
 function SyntaxHighlightedCode(props) {
   const ref = useRef(null)
 
   React.useEffect(() => {
     if (ref.current && props.className?.includes('lang-')) {
-      // Use the imported hljs directly instead of window.hljs
       hljs.highlightElement(ref.current)
-
-      // hljs won't reprocess the element unless this attribute is removed
       ref.current.removeAttribute('data-highlighted')
     }
   }, [props.className, props.children])
@@ -25,21 +22,19 @@ function SyntaxHighlightedCode(props) {
   return <code {...props} ref={ref} />
 }
 
-
 const Project = () => {
-
   const location = useLocation()
-
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [selectedUserId, setSelectedUserId] = useState(new Set()) // Initialized as Set
+  const [selectedUserId, setSelectedUserId] = useState(new Set())
   const [project, setProject] = useState(location.state.project)
   const [message, setMessage] = useState('')
   const { user } = useContext(UserContext)
-  const messageBox = useRef(null) // Changed to useRef hook
+  const messageBox = useRef(null)
+  const fileInputRef = useRef(null)
 
   const [users, setUsers] = useState([])
-  const [messages, setMessages] = useState([]) // New state variable for messages
+  const [messages, setMessages] = useState([])
   const [fileTree, setFileTree] = useState({})
 
   const [currentFile, setCurrentFile] = useState(null)
@@ -49,41 +44,42 @@ const Project = () => {
   const [iframeUrl, setIframeUrl] = useState(null)
 
   const [runProcess, setRunProcess] = useState(null)
-  const [runningStatus, setRunningStatus] = useState('idle') // Add status for better UX
+  const [runningStatus, setRunningStatus] = useState('idle')
+  const [isUploading, setIsUploading] = useState(false)
 
-  // Add this function to restructure file paths with slashes into proper nested objects
+  // Debug state variables when they change
+  useEffect(() => {
+    console.log("Debug - isSidePanelOpen:", isSidePanelOpen);
+    console.log("Debug - project:", project);
+    console.log("Debug - project.users:", project?.users);
+    console.log("Debug - users:", users);
+  }, [isSidePanelOpen, project, users]);
+
+  // Restructure file tree function remains the same
   const restructureFileTree = (fileTree) => {
     const newTree = {};
 
-    // Process each file path
     Object.keys(fileTree).forEach(path => {
-      // Skip if it's already a proper structure (no slashes)
       if (!path.includes('/')) {
         newTree[path] = fileTree[path];
         return;
       }
 
-      // Split path into segments
       const segments = path.split('/');
       let currentLevel = newTree;
 
-      // Process all segments except the last one (which is the file name)
       for (let i = 0; i < segments.length - 1; i++) {
         const segment = segments[i];
 
-        // Create directory if it doesn't exist
         if (!currentLevel[segment]) {
           currentLevel[segment] = { directory: {} };
         } else if (!currentLevel[segment].directory) {
-          // Handle case where it might exist but not as a directory
           currentLevel[segment] = { directory: {} };
         }
 
-        // Move to next level
         currentLevel = currentLevel[segment].directory;
       }
 
-      // Add the file at the appropriate level
       const fileName = segments[segments.length - 1];
       currentLevel[fileName] = { file: fileTree[path].file };
     });
@@ -99,11 +95,9 @@ const Project = () => {
       } else {
         newSelectedUserId.add(id);
       }
-
       return newSelectedUserId;
     });
   }
-
 
   function addCollaborators() {
     axios.put("/projects/add-user", {
@@ -111,6 +105,11 @@ const Project = () => {
       users: Array.from(selectedUserId)
     }).then(res => {
       console.log(res.data)
+      // Update the project state with new users
+      setProject(prevProject => ({
+        ...prevProject,
+        users: [...(prevProject.users || []), ...Array.from(selectedUserId)]
+      }));
       setIsModalOpen(false)
     }).catch(err => {
       console.log(err)
@@ -118,16 +117,15 @@ const Project = () => {
   }
 
   const send = () => {
-    if (!message.trim()) return; // Prevent sending empty messages
+    if (!message.trim()) return;
 
     sendMessage('project-message', {
       message,
       sender: user
     })
-    setMessages(prevMessages => [...prevMessages, { sender: user, message }]) // Update messages state
+    setMessages(prevMessages => [...prevMessages, { sender: user, message }])
     setMessage("")
 
-    // Scroll to bottom after sending
     setTimeout(scrollToBottom, 100);
   }
 
@@ -135,7 +133,7 @@ const Project = () => {
     try {
       const messageObject = JSON.parse(message)
       return (
-        <div className='overflow-auto bg-black text-white rounded-sm p-2'>
+        <div className='overflow-auto bg-gray-900 text-white rounded-lg p-4 border border-gray-800'>
           <Markdown
             children={messageObject.text}
             options={{
@@ -148,23 +146,22 @@ const Project = () => {
       )
     } catch (error) {
       console.error("Error parsing AI message:", error)
-      return <div className='overflow-auto bg-black text-white rounded-sm p-2'>{message}</div>
+      return <div className='overflow-auto bg-gray-900 text-white rounded-lg p-4 border border-gray-800'>{message}</div>
     }
   }
 
   useEffect(() => {
-    // Initialize highlight.js when component mounts
     hljs.configure({
       ignoreUnescapedHTML: true
     });
 
-    // Register common languages
     const codeElements = document.querySelectorAll('pre code');
     codeElements.forEach((el) => {
       hljs.highlightElement(el);
     });
   }, []);
 
+  // Consolidated data fetching in a single useEffect
   useEffect(() => {
     initializeSocket(project._id)
 
@@ -175,10 +172,45 @@ const Project = () => {
       })
     }
 
+    // First, fetch the project data with populated users
+    axios.get(`/projects/get-project/${location.state.project._id}`)
+      .then(res => {
+        console.log("Project data with populated users:", res.data.project)
+
+        // Store the project with populated users
+        setProject(res.data.project)
+        setFileTree(res.data.project.fileTree || {})
+
+        // Check if users are properly populated as objects
+        const areUserObjectsPopulated = res.data.project.users &&
+          res.data.project.users.length > 0 &&
+          typeof res.data.project.users[0] === 'object';
+
+        if (!areUserObjectsPopulated) {
+          console.log("Users not populated, fetching separately");
+          // If not populated properly, fetch all users as fallback
+          return axios.get('/users/all')
+            .then(usersRes => {
+              console.log("All users fetched:", usersRes.data.users)
+              setUsers(usersRes.data.users || [])
+            });
+        }
+      })
+      .catch(err => {
+        console.log("Error in data fetching:", err)
+
+        // Fallback to fetching all users
+        axios.get('/users/all')
+          .then(res => {
+            console.log("Fallback users fetched:", res.data.users)
+            setUsers(res.data.users || [])
+          })
+          .catch(usersErr => console.log("Error fetching users:", usersErr))
+      })
+
     receiveMessage('project-message', data => {
       console.log("Received message:", data);
 
-      // Create a standardized message object to handle all cases
       let messageObj = {
         sender: {
           _id: data.sender?._id || 'ai',
@@ -187,56 +219,33 @@ const Project = () => {
         message: data.message || ''
       };
 
-      // Handle AI messages with file tree data
       if (messageObj.sender._id === 'ai') {
         try {
-          // Try to parse the message as JSON
           const parsedMessage = typeof data.message === 'string' ? JSON.parse(data.message) : data.message;
 
           if (parsedMessage.fileTree) {
-            // Process file tree before mounting to handle nested paths correctly
             const restructuredFileTree = restructureFileTree(parsedMessage.fileTree);
             webContainer?.mount(restructuredFileTree);
-            setFileTree(parsedMessage.fileTree); // Keep original for display but mount restructured
+            setFileTree(parsedMessage.fileTree);
           }
         } catch (error) {
           console.error("Error handling AI message:", error)
-          // If parsing fails, continue with the original message
         }
       }
 
       setMessages(prevMessages => [...prevMessages, messageObj]);
-
-      // Scroll to bottom when receiving a new message
       setTimeout(scrollToBottom, 100);
     });
 
-    axios.get(`/projects/get-project/${location.state.project._id}`).then(res => {
-      console.log(res.data.project)
-      setProject(res.data.project)
-      setFileTree(res.data.project.fileTree || {})
-    })
-
-    axios.get('/users/all').then(res => {
-      setUsers(res.data.users)
-    }).catch(err => {
-      console.log(err)
-    })
-
-    // Scroll to bottom when component mounts to ensure initial messages are visible
     setTimeout(scrollToBottom, 300);
-
   }, [])
 
-  // Add effect to scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // Add effect to rehighlight code when currentFile changes
   useEffect(() => {
     if (currentFile) {
-      // Find the code element in the editor and highlight it
       const codeElement = document.querySelector('.code-editor-area pre code');
       if (codeElement) {
         hljs.highlightElement(codeElement);
@@ -245,7 +254,6 @@ const Project = () => {
   }, [currentFile, fileTree]);
 
   function saveFileTree(ft) {
-    // Keep the original structure for saving to the database
     axios.put('/projects/update-file-tree', {
       projectId: project._id,
       fileTree: ft
@@ -262,7 +270,6 @@ const Project = () => {
     }
   }
 
-  // Helper function to detect file type
   const getFileType = (filename) => {
     if (!filename) return 'unknown';
 
@@ -277,10 +284,97 @@ const Project = () => {
     return extension;
   }
 
-  // Create a simple server to serve files
+  // Handle file upload function
+  const handleFileUpload = (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+
+    // Process each file
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+
+      reader.onload = async (event) => {
+        const fileName = file.name;
+        const fileContent = event.target.result;
+
+        // If it's a binary file (like image), we need to handle differently
+        // For now, let's handle text files only
+        const isTextFile = file.type.startsWith('text/') ||
+          ['application/json', 'application/javascript', 'application/xml'].includes(file.type);
+
+        if (isTextFile) {
+          // Text file handling
+          const newFileTree = {
+            ...fileTree,
+            [fileName]: {
+              file: {
+                contents: fileContent
+              }
+            }
+          };
+
+          setFileTree(newFileTree);
+          saveFileTree(newFileTree);
+
+          // Open the file if it's the only one uploaded
+          if (files.length === 1) {
+            setCurrentFile(fileName);
+            if (!openFiles.includes(fileName)) {
+              setOpenFiles([...openFiles, fileName]);
+            }
+          }
+        } else {
+          // For binary files, we could either:
+          // 1. Convert to base64 (not ideal for large files)
+          // 2. Use a separate API endpoint to handle binary file uploads
+          // 3. Show an error message that binary files aren't supported yet
+          console.log("Binary files not fully supported yet:", fileName);
+
+          // For now, let's store it anyway and let the backend handle it
+          const newFileTree = {
+            ...fileTree,
+            [fileName]: {
+              file: {
+                contents: fileContent
+              }
+            }
+          };
+
+          setFileTree(newFileTree);
+          saveFileTree(newFileTree);
+        }
+
+        // If this is the last file, reset uploading state
+        if (Array.from(files).indexOf(file) === files.length - 1) {
+          setIsUploading(false);
+        }
+      };
+
+      if (file.type.startsWith('text/') ||
+        ['application/json', 'application/javascript', 'application/xml'].includes(file.type)) {
+        reader.readAsText(file);
+      } else {
+        // For binary files, read as data URL for now
+        reader.readAsDataURL(file);
+      }
+    });
+
+    // Reset the file input
+    e.target.value = null;
+  };
+
+  // Trigger file input click
+  const triggerFileUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Additional functions (createSimpleServer, runCurrentProject, etc.) remain the same
   const createSimpleServer = async () => {
     try {
-      // Create a simple server.js file to serve static content
       const serverFileContent = `
 const http = require('http');
 const fs = require('fs');
@@ -334,7 +428,6 @@ server.listen(3000, () => {
 });
       `;
 
-      // Create a simple HTML file if none exists
       const createDefaultHtml = async () => {
         const htmlFiles = Object.keys(fileTree).filter(file =>
           file.toLowerCase().endsWith('.html') || file.toLowerCase().endsWith('.htm')
@@ -371,10 +464,7 @@ server.listen(3000, () => {
         }
       };
 
-      // Add the server.js file to the container
       await webContainer.fs.writeFile('server.js', serverFileContent);
-
-      // Ensure we have at least one HTML file
       await createDefaultHtml();
 
       return true;
@@ -384,31 +474,24 @@ server.listen(3000, () => {
     }
   };
 
-  // Run the appropriate command based on file type
   const runCurrentProject = async () => {
     try {
       setRunningStatus('starting');
 
-      // Kill any existing process
       if (runProcess) {
         runProcess.kill();
         setRunProcess(null);
       }
 
-      // Restructure the file tree before mounting
       const restructuredFileTree = restructureFileTree(fileTree);
-
-      // Mount the restructured file tree
       await webContainer.mount(restructuredFileTree);
 
-      // Determine if this is an HTML/static project or a Node.js project
       const hasPackageJson = Object.keys(fileTree).includes('package.json');
       const hasHtmlFiles = Object.keys(fileTree).some(file =>
         file.toLowerCase().endsWith('.html') || file.toLowerCase().endsWith('.htm')
       );
 
       if (hasPackageJson) {
-        // This is a Node.js project, proceed with npm install and npm start
         const installProcess = await webContainer.spawn("npm", ["install"]);
 
         installProcess.output.pipeTo(new WritableStream({
@@ -417,7 +500,6 @@ server.listen(3000, () => {
           }
         }));
 
-        // Wait for installation to complete
         const installExitCode = await installProcess.exit;
 
         if (installExitCode !== 0) {
@@ -426,7 +508,6 @@ server.listen(3000, () => {
           return;
         }
 
-        // Start the application
         const startProcess = await webContainer.spawn("npm", ["start"]);
 
         startProcess.output.pipeTo(new WritableStream({
@@ -437,8 +518,6 @@ server.listen(3000, () => {
 
         setRunProcess(startProcess);
       } else if (hasHtmlFiles) {
-        // This is a static HTML project
-        // Create a simple server to serve HTML files
         const serverCreated = await createSimpleServer();
 
         if (!serverCreated) {
@@ -446,7 +525,6 @@ server.listen(3000, () => {
           return;
         }
 
-        // Start the simple server
         const serverProcess = await webContainer.spawn("node", ["server.js"]);
 
         serverProcess.output.pipeTo(new WritableStream({
@@ -456,8 +534,6 @@ server.listen(3000, () => {
         }));
 
         setRunProcess(serverProcess);
-
-        // Set the iframe URL manually since we know it's running on port 3000
         setIframeUrl('http://localhost:3000');
       } else {
         console.error('No supported files found to run');
@@ -465,7 +541,6 @@ server.listen(3000, () => {
         return;
       }
 
-      // Listen for server-ready event
       webContainer.on('server-ready', (port, url) => {
         console.log(`Server ready on port ${port} at ${url}`);
         setIframeUrl(url);
@@ -478,51 +553,130 @@ server.listen(3000, () => {
     }
   };
 
-  // Function to determine if a message is from the current user
   const isCurrentUserMessage = (messageObj) => {
     return messageObj.sender._id === user._id?.toString();
   };
 
+  const getFileIcon = (fileName) => {
+    const extension = fileName.split('.').pop().toLowerCase();
+
+    if (extension === 'html' || extension === 'htm') return "ri-html5-fill";
+    if (extension === 'css') return "ri-css3-fill";
+    if (extension === 'js') return "ri-javascript-fill";
+    if (extension === 'jsx') return "ri-reactjs-fill";
+    if (extension === 'json') return "ri-file-code-fill";
+    if (extension === 'md') return "ri-markdown-fill";
+
+    return "ri-file-text-fill";
+  };
+
+  // download feature for files
+  const downloadFile = (fileName) => {
+    // Get the file content from your fileTree
+    const fileContent = fileTree[fileName]?.file?.contents;
+
+    if (fileContent !== undefined) {
+      // Create a blob with the file content
+      const blob = new Blob([fileContent], { type: 'text/plain' });
+
+      // Create a URL for the blob
+      const url = URL.createObjectURL(blob);
+
+      // Create a temporary anchor element
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+
+      // Append to the document, click it, and remove it
+      document.body.appendChild(a);
+      a.click();
+
+      // Clean up
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+    } else {
+      console.error(`File ${fileName} not found or has no content`);
+      // Optionally show a user-friendly error notification
+      alert(`Cannot download ${fileName}: File not found or empty`);
+    }
+  };
+
   return (
-    <main className='h-screen w-screen flex'>
-      <section className="left relative flex flex-col h-screen min-w-96 bg-slate-300">
-        <header className='flex justify-between items-center p-2 px-4 w-full bg-slate-100 absolute z-10 top-0 mb-2'>
-          <button className='flex gap-2' onClick={() => setIsModalOpen(true)}>
+    <main className='min-h-screen w-full bg-black flex'>
+      {/* Background effects similar to Home page */}
+      <div className="absolute w-80 h-80 bg-purple-500 rounded-full blur-3xl opacity-10 animate-pulse left-30 top-30"></div>
+      <div className="absolute w-80 h-80 bg-blue-500 rounded-full blur-3xl opacity-10 animate-pulse right-0 bottom-0"></div>
+
+      {/* Left Panel - Chat */}
+      <section className="left relative flex flex-col h-screen w-1/3 min-w-64 border-r border-gray-800">
+        <motion.header
+          style={{ padding: 10 }}
+          className='flex justify-between items-center p-4 w-full bg-gradient-to-r from-gray-900 to-black border-b border-gray-800 absolute z-10 top-0'
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <motion.button
+            style={{ cursor: 'pointer' }}
+            className='flex gap-2 items-center text-gray-300 hover:text-white transition-colors duration-300'
+            onClick={() => setIsModalOpen(true)}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
             <i className="ri-add-fill mr-1"></i>
-            <p>Add collaborator</p>
-          </button>
-          <button onClick={() => setIsSidePanelOpen(!isSidePanelOpen)} className='p-2'>
+            <p className="font-['Poppins',sans-serif]">Add collaborator</p>
+          </motion.button>
+
+          <motion.button
+            style={{ cursor: 'pointer' }}
+            onClick={() => setIsSidePanelOpen(!isSidePanelOpen)}
+            className='p-2 text-gray-300 hover:text-white transition-colors duration-300'
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
             <i className="ri-group-fill"></i>
-          </button>
-        </header>
+          </motion.button>
+        </motion.header>
 
-        <div className="conversation-area pt-14 pb-16 flex-grow flex flex-col min-h-96 relative">
-
-          {/* Added proper padding to avoid overlap with header and input field */}
+        <div className="conversation-area pt-20 pb-16 flex-grow flex flex-col min-h-96 relative">
           <div
+            style={{ marginTop: 50, marginBottom: 50, marginLeft: 10, marginRight: 10 }}
             ref={messageBox}
-            className="message-box pt-16 pb-20 p-3 flex-grow flex flex-col gap-3 overflow-auto max-h-80 scrollbar-hide">
+            className="message-box pt-4 pb-20 p-4 flex-grow flex flex-col gap-4 overflow-auto max-h-full scrollbar-hide"
+          >
             {messages.map((msg, index) => (
-              <div key={index}
-                className={`message-container flex w-full ${isCurrentUserMessage(msg) ? 'justify-end' : 'justify-start'}`}>
+              <motion.div
+                key={index}
+                className={`message-container flex w-full ${isCurrentUserMessage(msg) ? 'justify-end' : 'justify-start'}`}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: index * 0.05 }}
+              >
                 <div
-                  className={`message flex flex-col p-3 ${msg.sender._id === 'ai' ? 'bg-slate-200 max-w-80' :
-                    isCurrentUserMessage(msg) ? 'bg-blue-100 max-w-64' : 'bg-slate-50 max-w-64'
-                    } rounded-lg shadow-sm ${isCurrentUserMessage(msg) ? 'rounded-tr-none' : 'rounded-tl-none'
-                    }`}>
-                  <small className='text-xs text-gray-600 mb-1'>{msg.sender.email || 'Unknown'}</small>
-                  <div className='text-sm'>
-                    {msg.sender._id === 'ai' ?
-                      WriteAiMessage(msg.message)
-                      : <p className="break-words">{msg.message}</p>}
+                  style={{ padding: 4 }}
+                  className={`message flex flex-col p-4 ${msg.sender._id === 'ai'
+                    ? 'bg-gradient-to-br from-gray-900 to-black border border-gray-800 max-w-80'
+                    : isCurrentUserMessage(msg)
+                      ? 'bg-gradient-to-br from-purple-600/30 to-blue-600/30 border border-blue-800/50 max-w-72'
+                      : 'bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 max-w-72'
+                    } rounded-xl shadow-md ${isCurrentUserMessage(msg) ? 'rounded-tr-none' : 'rounded-tl-none'
+                    }`}
+                >
+                  <small className='text-xs text-gray-400 mb-2 font-["Inter",sans-serif]'>{msg.sender.email || 'Unknown'}</small>
+                  <div style={{ margin: 4, fontSize: 18 }} className='text-sm text-gray-200'>
+                    {msg.sender._id === 'ai'
+                      ? WriteAiMessage(msg.message)
+                      : <p className="break-words font-['Inter',sans-serif]">{msg.message}</p>
+                    }
                   </div>
                 </div>
-              </div>
+              </motion.div>
             ))}
           </div>
 
-          <div className="inputField w-full flex absolute bottom-0 bg-white">
-            {/* Added bg-white to ensure input is visible */}
+          <div style={{ padding: 8 }} className="inputField w-full flex absolute bottom-0 bg-gradient-to-r from-gray-900 to-black border-t border-gray-800">
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -531,186 +685,342 @@ server.listen(3000, () => {
                   send();
                 }
               }}
-              className='p-2 px-4 border-none outline-none flex-grow'
+              className='p-4 px-5 border-none outline-none flex-grow bg-transparent text-gray-300 font-["Inter",sans-serif]'
               type="text"
-              placeholder='Enter message' />
-            <button
+              placeholder='Enter message...'
+            />
+            <motion.button
+              style={{ cursor: 'pointer', fontSize: 20 }}
               onClick={send}
-              className='px-5 bg-blue-500 text-white cursor-pointer'>
+              className='px-5 text-blue-400 hover:text-blue-300 transition-colors duration-300'
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
               <i className="ri-send-plane-fill"></i>
-            </button>
-          </div>
-
-        </div>
-
-        <div className={`sidePanel w-full h-full flex flex-col gap-2 bg-slate-50 absolute transition-all ${isSidePanelOpen ? 'translate-x-0' : '-translate-x-full'} top-0`}>
-          <header className='flex justify-between items-center px-4 p-2 bg-slate-200'>
-
-            <h1
-              className='font-semibold text-lg'
-            >Collaborators</h1>
-
-            <button onClick={() => setIsSidePanelOpen(!isSidePanelOpen)} className='p-2'>
-              <i className="ri-close-fill"></i>
-            </button>
-          </header>
-          <div className="users flex flex-col gap-2">
-
-            {project.users && project.users.map((user, index) => {
-              return (
-                <div key={index} className="user cursor-pointer hover:bg-slate-200 p-2 flex gap-2 items-center">
-                  <div className='aspect-square rounded-full w-fit h-fit flex items-center justify-center p-5 text-white bg-slate-600'>
-                    <i className="ri-user-fill absolute"></i>
-                  </div>
-                  <h1 className='font-semibold text-lg'>{user.email}</h1>
-                </div>
-              )
-            })}
+            </motion.button>
           </div>
         </div>
       </section>
 
-      <section className="right bg-red-50 flex-grow h-full flex">
-
-        <div className="explorer h-full max-w-64 min-w-52 bg-slate-200">
-          <div className="file-tree w-full">
-            {
-              Object.keys(fileTree).map((file, index) => (
-                <button
-                  key={index}
-                  onClick={() => {
-                    setCurrentFile(file)
-                    setOpenFiles([...new Set([...openFiles, file])])
-                  }}
-                  className="tree-element cursor-pointer p-2 px-4 flex items-center gap-2 bg-slate-300 w-full">
-                  <p
-                    className='font-semibold text-lg'
-                  >{file}</p>
-                </button>))
-
-            }
-          </div>
-
-        </div>
-
-
-        <div className="code-editor flex flex-col flex-grow h-full shrink">
-
-          <div className="top flex justify-between w-full">
-
-            <div className="files flex">
-              {
-                openFiles.map((file, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setCurrentFile(file)}
-                    className={`open-file cursor-pointer p-2 px-4 flex items-center w-fit gap-2 bg-slate-300 ${currentFile === file ? 'bg-slate-400' : ''}`}>
-                    <p
-                      className='font-semibold text-lg'
-                    >{file}</p>
-                  </button>
-                ))
-              }
-            </div>
-
-            <div className="actions flex gap-2">
-              <button
-                onClick={runCurrentProject}
-                className={`p-2 px-4 ${runningStatus === 'starting' ? 'bg-yellow-500' : runningStatus === 'error' ? 'bg-red-500' : 'bg-green-500'} text-white`}
-                disabled={runningStatus === 'starting'}
+      {/* Center Panel - Code Editor */}
+      <section className="center relative flex flex-col h-screen flex-grow bg-gray-950">
+        <motion.header
+          style={{ padding: 7, overflow: 'hidden' }}
+          className='flex justify-between items-center p-4 w-full bg-gradient-to-r from-gray-900 to-black border-b border-gray-800'
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="file-tabs flex gap-2 overflow-x-auto hide-scrollbar">
+            {openFiles.map((file, index) => (
+              <motion.div
+                key={index}
+                className={`file-tab flex items-center gap-2 p-2 rounded ${currentFile === file ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'
+                  } cursor-pointer transition-colors duration-300`}
+                onClick={() => setCurrentFile(file)}
               >
-                {runningStatus === 'starting' ? 'Starting...' : 'Run'}
-              </button>
-            </div>
-          </div>
-          <div className="bottom flex flex-grow max-w-full shrink overflow-auto">
-            {
-              fileTree[currentFile] && (
-                <div className="code-editor-area h-full overflow-auto flex-grow bg-slate-50">
-                  <pre
-                    className="hljs h-full">
-                    <code
-                      className={`hljs h-full outline-none language-${getFileType(currentFile)}`}
-                      contentEditable
-                      suppressContentEditableWarning
-                      onBlur={(e) => {
-                        const updatedContent = e.target.innerText;
-                        const ft = {
-                          ...fileTree,
-                          [currentFile]: {
-                            file: {
-                              contents: updatedContent
-                            }
-                          }
-                        }
-                        setFileTree(ft)
-                        saveFileTree(ft)
-
-                        // Re-highlight the code after saving
-                        if (e.target) {
-                          hljs.highlightElement(e.target);
-                        }
-                      }}
-                      dangerouslySetInnerHTML={{
-                        __html: fileTree[currentFile].file.contents
-                      }}
-                      style={{
-                        whiteSpace: 'pre-wrap',
-                        paddingBottom: '25rem',
-                        counterSet: 'line-numbering',
-                      }}
-                    />
-                  </pre>
-                </div>
-              )
-            }
+                <i className={getFileIcon(file)}></i>
+                <span className="font-['Poppins',sans-serif] text-sm">{file}</span>
+                <button
+                  className="ml-2 text-gray-500 hover:text-white"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenFiles(openFiles.filter(f => f !== file));
+                    if (currentFile === file) {
+                      setCurrentFile(openFiles.length > 1 ? openFiles.filter(f => f !== file)[0] : null);
+                    }
+                  }}
+                >
+                  <i className="ri-close-line"></i>
+                </button>
+              </motion.div>
+            ))}
           </div>
 
-        </div>
+          <motion.button
+            style={{ cursor: 'pointer', padding: 3 }}
+            onClick={runCurrentProject}
+            className={`flex items-center gap-2 px-4 py-2 rounded-md ${runningStatus === 'starting' ? 'bg-yellow-600' :
+              runningStatus === 'running' ? 'bg-green-600' :
+                runningStatus === 'error' ? 'bg-red-600' :
+                  'bg-blue-600'
+              } text-white transition-colors duration-300`}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            disabled={runningStatus === 'starting'}
+          >
+            {runningStatus === 'starting' ? (
+              <>
+                <i className="ri-loader-4-line animate-spin"></i>
+                <span className="font-['Poppins',sans-serif]">Starting...</span>
+              </>
+            ) : runningStatus === 'running' ? (
+              <>
+                <i className="ri-refresh-line"></i>
+                <span className="font-['Poppins',sans-serif]">Restart</span>
+              </>
+            ) : runningStatus === 'error' ? (
+              <>
+                <i className="ri-error-warning-line"></i>
+                <span className="font-['Poppins',sans-serif]">Try Again</span>
+              </>
+            ) : (
+              <>
+                <i className="ri-play-fill"></i>
+                <span className="font-['Poppins',sans-serif]">Run</span>
+              </>
+            )}
+          </motion.button>
+        </motion.header>
 
-        {iframeUrl && webContainer &&
-          (<div className="flex min-w-96 flex-col h-full">
-            <div className="address-bar">
-              <input type="text"
-                onChange={(e) => setIframeUrl(e.target.value)}
-                value={iframeUrl} className="w-full p-2 px-4 bg-slate-200" />
-            </div>
-            <iframe src={iframeUrl} className="w-full h-full"></iframe>
-          </div>)
-        }
+        <div className="editor-container flex flex-grow">
+
+          {/* File tree sidebar */}
+          <div style={{ overflow: 'hidden' }} className="file-tree w-60 border-r border-gray-800 overflow-y-auto bg-gray-900 p-3">
 
 
-      </section>
+            <h3 style={{ margin: 4, fontSize: 15 }} className="text-gray-400 font-semibold mb-3 px-2 font-['Poppins',sans-serif]">Files</h3>
 
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-          <div className="bg-white p-4 rounded-md w-96 max-w-full relative">
-            <header className='flex justify-between items-center mb-4'>
-              <h2 className='text-xl font-semibold'>Select User</h2>
-              <button onClick={() => setIsModalOpen(false)} className='p-2'>
-                <i className="ri-close-fill"></i>
-              </button>
-            </header>
-            <div className="users-list flex flex-col gap-2 mb-16 max-h-96 overflow-auto">
-              {users.map((user, index) => (
-                <div key={index} className={`user cursor-pointer hover:bg-slate-200 ${Array.from(selectedUserId).indexOf(user._id) !== -1 ? 'bg-slate-200' : ""} p-2 flex gap-2 items-center`} onClick={() => handleUserClick(user._id)}>
-                  <div className='aspect-square relative rounded-full w-fit h-fit flex items-center justify-center p-5 text-white bg-slate-600'>
-                    <i className="ri-user-fill absolute"></i>
-                  </div>
-                  <h1 className='font-semibold text-lg'>{user.email}</h1>
-                </div>
+            <div className="files">
+              {Object.keys(fileTree).map((file, index) => (
+                <motion.div
+                  key={index}
+                  className={`file flex items-center gap-2 p-2 rounded cursor-pointer ${currentFile === file ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'
+                    } transition-colors duration-300 group`} // Added group for hover effect
+                  onClick={() => {
+                    setCurrentFile(file);
+                    if (!openFiles.includes(file)) {
+                      setOpenFiles([...openFiles, file]);
+                    }
+                  }}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <i className={getFileIcon(file)}></i>
+                  <span className="text-sm truncate flex-grow font-['Inter',sans-serif]">{file}</span>
+                  <button
+                    className="download-btn text-gray-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                    onClick={(e) => {
+                      e.stopPropagation(); // Prevent file selection when clicking download
+                      downloadFile(file);
+                    }}
+                    title="Download file"
+                  >
+                    <i className="ri-download-line"></i>
+                  </button>
+                </motion.div>
               ))}
             </div>
-            <button
-              onClick={addCollaborators}
-              className='absolute bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 bg-blue-600 text-white rounded-md'>
-              Add Collaborators
-            </button>
+
+            {/* File Action Buttons */}
+            <div className="file-actions flex gap-2 mt-4">
+              <motion.button
+                style={{ cursor: 'pointer' }}
+                className="flex-1 flex items-center justify-center gap-2 p-2 rounded-md bg-gray-800 text-gray-300 hover:text-white transition-colors duration-300"
+                onClick={() => {
+                  const fileName = prompt('Enter file name:');
+                  if (fileName && !fileTree[fileName]) {
+                    const newFileTree = {
+                      ...fileTree,
+                      [fileName]: {
+                        file: {
+                          contents: ''
+                        }
+                      }
+                    };
+                    setFileTree(newFileTree);
+                    setCurrentFile(fileName);
+                    setOpenFiles([...openFiles, fileName]);
+                    saveFileTree(newFileTree);
+                  }
+                }}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <i className="ri-add-line"></i>
+                <span className="text-sm font-['Poppins',sans-serif]">New File</span>
+              </motion.button>
+
+              <motion.button
+                style={{ cursor: 'pointer' }}
+                className="flex-1 flex items-center justify-center gap-2 p-2 rounded-md bg-gray-800 text-gray-300 hover:text-white transition-colors duration-300"
+                onClick={triggerFileUpload}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <i className="ri-upload-line"></i>
+                <span className="text-sm font-['Poppins',sans-serif]">Upload</span>
+              </motion.button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+                multiple
+              />
+            </div>
+
+            {/* Upload Status Indicator */}
+            {isUploading && (
+              <div className="upload-status mt-2 p-2 bg-gray-800 rounded-md">
+                <div className="flex items-center gap-2">
+                  <i className="ri-loader-4-line animate-spin text-blue-400"></i>
+                  <span className="text-sm text-gray-300 font-['Inter',sans-serif]">Uploading...</span>
+                </div>
+              </div>
+            )}
+
           </div>
+
+          {/* Main editor area */}
+          <div className="editor-area flex-grow flex flex-col bg-gray-950">
+            {currentFile ? (
+              <div className="code-editor-area h-full relative overflow-auto">
+                <textarea
+                  style={{color:'white'}}
+                  value={fileTree[currentFile]?.file?.contents || ''}
+                  onChange={(e) => {
+                    const newFileTree = {
+                      ...fileTree,
+                      [currentFile]: {
+                        file: {
+                          contents: e.target.value
+                        }
+                      }
+                    };
+                    setFileTree(newFileTree);
+                    saveFileTree(newFileTree);
+                  }}
+                  className="h-full w-full p-4 bg-gray-950 text-gray-200 border-none resize-none outline-none font-mono"
+                  spellCheck="false"
+                />
+                <pre className="absolute inset-0 pointer-events-none p-4 font-mono">
+                  <code className={`language-${getFileType(currentFile)}`}>
+                    {fileTree[currentFile]?.file?.contents || ''}
+                  </code>
+                </pre>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                <i className="ri-file-code-line text-6xl mb-4"></i>
+                <p className="text-xl font-['Poppins',sans-serif]">Select a file to edit</p>
+                <p className="text-sm mt-2 font-['Inter',sans-serif]">or create a new one to get started</p>
+              </div>
+            )}
+          </div>
+
+          {/* Preview panel when project is running */}
+          {iframeUrl && (
+            <div className="preview-panel w-1/2 border-l border-gray-800 bg-white">
+              <iframe
+                src={iframeUrl}
+                className="w-full h-full border-none"
+                title="Project Preview"
+                sandbox="allow-forms allow-modals allow-pointer-lock allow-popups allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
+              />
+            </div>
+          )}
+        </div>
+      </section>
+
+
+      {/* Collaborators Side Panel */}
+      {isSidePanelOpen && (
+        <motion.section
+          className="left-panel absolute left-0 top-0 h-screen w-64 bg-gray-900 border-r border-gray-800 overflow-auto z-20"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <div className="p-4 pt-20">
+            <h3 style={{ padding: 10, fontSize: 15 }} className="text-lg font-semibold text-gray-300 mb-4 font-['Poppins',sans-serif]">Collaborators:</h3>
+            <div className="users-list space-y-3">
+              {project?.users && project.users.length > 0 ? (
+                project.users.map((projectUser, index) => {
+                  // Ensure projectUser is an object with _id and email
+                  const userId = typeof projectUser === 'object' ? projectUser._id : projectUser;
+                  const userEmail = typeof projectUser === 'object' ? projectUser.email :
+                    users.find(u => u._id === projectUser)?.email || 'Unknown';
+
+                  return (
+                    <div
+                      key={index}
+                      className="user-item flex items-center gap-3 p-2 rounded bg-gray-800"
+                    >
+                      <div className="avatar w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                        <span className="text-white text-sm font-semibold">
+                          {userEmail ? userEmail[0].toUpperCase() : '?'}
+                        </span>
+                      </div>
+                      <div className="user-info">
+                        <p className="text-gray-300 text-sm font-['Inter',sans-serif]">{userEmail || 'Unknown'}</p>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-gray-500 text-sm font-['Inter',sans-serif]">No collaborators yet</p>
+              )}
+            </div>
+          </div>
+        </motion.section>
+      )}
+
+      {/* Add Collaborator Modal */}
+      {isModalOpen && (
+        <div className="modal-backdrop fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <motion.div
+            className="modal bg-gray-900 rounded-lg shadow-xl w-96 border border-gray-800"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className="modal-header border-b border-gray-800 p-4">
+              <h3 className="text-lg font-semibold text-gray-300 font-['Poppins',sans-serif]">Add Collaborators</h3>
+            </div>
+            <div className="modal-body p-4 max-h-80 overflow-y-auto">
+              <div className="users-list space-y-2">
+                {users.map((u, index) => (
+                  <div
+                    key={index}
+                    className={`user-item flex items-center gap-3 p-2 rounded cursor-pointer ${selectedUserId.has(u._id) ? 'bg-blue-900' : 'bg-gray-800 hover:bg-gray-700'
+                      } transition-colors duration-300`}
+                    onClick={() => handleUserClick(u._id)}
+                  >
+                    <div className="avatar w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                      <span className="text-white text-sm font-semibold">
+                        {u.email[0].toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="user-info flex-grow">
+                      <p className="text-gray-300 text-sm font-['Inter',sans-serif]">{u.email}</p>
+                    </div>
+                    {selectedUserId.has(u._id) && (
+                      <i className="ri-check-line text-blue-400"></i>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer border-t border-gray-800 p-4 flex justify-end gap-3">
+              <button
+                className="px-4 py-2 rounded bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors duration-300 font-['Poppins',sans-serif]"
+                onClick={() => setIsModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors duration-300 font-['Poppins',sans-serif]"
+                onClick={addCollaborators}
+              >
+                Add Selected
+              </button>
+            </div>
+          </motion.div>
         </div>
       )}
     </main>
-  )
-}
+  );
+};
 
-export default Project
+export default Project;
