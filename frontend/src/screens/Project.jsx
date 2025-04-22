@@ -6,7 +6,7 @@ import { initializeSocket, receiveMessage, sendMessage } from '../config/socket'
 import Markdown from 'markdown-to-jsx'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/nord.min.css'
-import { getWebContainer } from '../config/webcontainer'
+import { getWebContainer } from '../config/webcontainer.js'
 import { motion } from 'framer-motion' // Using same animation library as Home
 
 function SyntaxHighlightedCode(props) {
