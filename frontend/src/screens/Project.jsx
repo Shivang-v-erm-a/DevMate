@@ -26,14 +26,12 @@ const Project = () => {
   const location = useLocation()
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [selectedUserId, setSelectedUserId] = useState(new Set())
   const [project, setProject] = useState(location.state.project)
   const [message, setMessage] = useState('')
   const { user } = useContext(UserContext)
   const messageBox = useRef(null)
   const fileInputRef = useRef(null)
 
-  const [users, setUsers] = useState([])
   const [messages, setMessages] = useState([])
   const [fileTree, setFileTree] = useState({})
 
@@ -46,6 +44,84 @@ const Project = () => {
   const [runProcess, setRunProcess] = useState(null)
   const [runningStatus, setRunningStatus] = useState('idle')
   const [isUploading, setIsUploading] = useState(false)
+
+  // State variables
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [selectedUserId, setSelectedUserId] = useState(new Set());
+
+  // Fetch users when modal opens
+  useEffect(() => {
+    if (isModalOpen) {
+      fetchUsers();
+    }
+  }, [isModalOpen]);
+
+  const fetchUsers = () => {
+    setLoading(true);
+    setError(null);
+
+    axios.get("/users/all")
+      .then(res => {
+        // Your backend returns users in a nested object
+        const availableUsers = res.data.users || [];
+
+        // Filter out users already in the project
+        const projectUsers = location.state.project.users || [];
+        const filteredUsers = availableUsers.filter(user =>
+          !projectUsers.includes(user._id)
+        );
+
+        setUsers(filteredUsers);
+      })
+      .catch(err => {
+        console.error("Error fetching users:", err);
+        setError("Failed to load users. Please try again.");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
+
+  const handleUserClick = (id) => {
+    setSelectedUserId(prevSelectedUserId => {
+      const newSelectedUserId = new Set(prevSelectedUserId);
+      if (newSelectedUserId.has(id)) {
+        newSelectedUserId.delete(id);
+      } else {
+        newSelectedUserId.add(id);
+      }
+      return newSelectedUserId;
+    });
+  }
+
+  const addCollaborators = () => {
+    if (selectedUserId.size === 0) return;
+
+    setLoading(true);
+    axios.put("/projects/add-user", {
+      projectId: location.state.project._id,
+      users: Array.from(selectedUserId)
+    })
+      .then(res => {
+        console.log(res.data);
+        // Update the project state with new users
+        setProject(prevProject => ({
+          ...prevProject,
+          users: [...(prevProject.users || []), ...Array.from(selectedUserId)]
+        }));
+        setIsModalOpen(false);
+        // Optional: Show success notification
+      })
+      .catch(err => {
+        console.log(err);
+        setError("Failed to add collaborators. Please try again.");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }
 
   // Debug state variables when they change
   useEffect(() => {
@@ -87,47 +163,43 @@ const Project = () => {
     return newTree;
   };
 
-  const handleUserClick = (id) => {
-    setSelectedUserId(prevSelectedUserId => {
-      const newSelectedUserId = new Set(prevSelectedUserId);
-      if (newSelectedUserId.has(id)) {
-        newSelectedUserId.delete(id);
-      } else {
-        newSelectedUserId.add(id);
-      }
-      return newSelectedUserId;
-    });
-  }
-
-  function addCollaborators() {
-    axios.put("/projects/add-user", {
-      projectId: location.state.project._id,
-      users: Array.from(selectedUserId)
-    }).then(res => {
-      console.log(res.data)
-      // Update the project state with new users
-      setProject(prevProject => ({
-        ...prevProject,
-        users: [...(prevProject.users || []), ...Array.from(selectedUserId)]
-      }));
-      setIsModalOpen(false)
-    }).catch(err => {
-      console.log(err)
-    })
-  }
-
   const send = () => {
     if (!message.trim()) return;
 
+    // Make sure we have a properly structured user object with email
+    const senderObject = {
+      _id: user._id || 'unknown',
+      email: user.email || 'Unknown User'
+    };
+
+    // Log user object for debugging
+    console.log("Current user:", user);
+    console.log("Sender object for message:", senderObject);
+
     sendMessage('project-message', {
       message,
-      sender: user
+      sender: senderObject
     })
-    setMessages(prevMessages => [...prevMessages, { sender: user, message }])
-    setMessage("")
 
+    // Add message to local state with properly structured sender
+    setMessages(prevMessages => [...prevMessages, {
+      sender: senderObject,
+      message
+    }])
+
+    setMessage("")
     setTimeout(scrollToBottom, 100);
   }
+
+  const getSenderEmail = (sender) => {
+    // Handle different possible structures of the sender object
+    if (!sender) return 'Unknown';
+    if (typeof sender === 'string') return sender;
+    if (sender.email) return sender.email;
+    if (sender._id === 'ai') return 'AI Assistant';
+    return 'Unknown User';
+  };
+
 
   function WriteAiMessage(message) {
     try {
@@ -214,7 +286,7 @@ const Project = () => {
       let messageObj = {
         sender: {
           _id: data.sender?._id || 'ai',
-          email: data.sender?.email || 'AI Assistant'
+          email: data.sender?.email || (data.sender?._id === 'ai' ? 'AI Assistant' : 'Unknown User')
         },
         message: data.message || ''
       };
@@ -553,6 +625,7 @@ server.listen(3000, () => {
     }
   };
 
+  // Helper function to check if message is from current user
   const isCurrentUserMessage = (messageObj) => {
     return messageObj.sender._id === user._id?.toString();
   };
@@ -610,7 +683,7 @@ server.listen(3000, () => {
       <div className="absolute w-80 h-80 bg-blue-500 rounded-full blur-3xl opacity-10 animate-pulse right-0 bottom-0"></div>
 
       {/* Left Panel - Chat */}
-      <section className="left relative flex flex-col h-screen w-1/3 min-w-64 border-r border-gray-800">
+      <section className=" relative flex flex-col h-screen w-1/3 min-w-64 border-r border-gray-800">
         <motion.header
           style={{ padding: 10 }}
           className='flex justify-between items-center p-4 w-full bg-gradient-to-r from-gray-900 to-black border-b border-gray-800 absolute z-10 top-0'
@@ -646,34 +719,42 @@ server.listen(3000, () => {
             ref={messageBox}
             className="message-box pt-4 pb-20 p-4 flex-grow flex flex-col gap-4 overflow-auto max-h-full scrollbar-hide"
           >
-            {messages.map((msg, index) => (
-              <motion.div
-                key={index}
-                className={`message-container flex w-full ${isCurrentUserMessage(msg) ? 'justify-end' : 'justify-start'}`}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: index * 0.05 }}
-              >
-                <div
-                  style={{ padding: 4 }}
-                  className={`message flex flex-col p-4 ${msg.sender._id === 'ai'
-                    ? 'bg-gradient-to-br from-gray-900 to-black border border-gray-800 max-w-80'
-                    : isCurrentUserMessage(msg)
-                      ? 'bg-gradient-to-br from-purple-600/30 to-blue-600/30 border border-blue-800/50 max-w-72'
-                      : 'bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 max-w-72'
-                    } rounded-xl shadow-md ${isCurrentUserMessage(msg) ? 'rounded-tr-none' : 'rounded-tl-none'
-                    }`}
+            {messages.map((msg, index) => {
+              const  isCurrentUser = msg.sender.email=== user.email;
+              console.log("Message sender ID:", msg.sender.email, "Current user ID:", user.email)
+              const isAI = msg.sender._id === 'ai'
+
+              return (
+                <motion.div
+                  key={index}
+                  className={`message-container flex w-full ${isCurrentUser? 'justify-end' : 'justify-start'}`}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, delay: index * 0.05 }}
                 >
-                  <small className='text-xs text-gray-400 mb-2 font-["Inter",sans-serif]'>{msg.sender.email || 'Unknown'}</small>
-                  <div style={{ margin: 4, fontSize: 18 }} className='text-sm text-gray-200'>
-                    {msg.sender._id === 'ai'
-                      ? WriteAiMessage(msg.message)
-                      : <p className="break-words font-['Inter',sans-serif]">{msg.message}</p>
-                    }
+                  <div
+                    style={{ padding: 4 }}
+                    className={`message flex flex-col p-4 ${isAI
+                      ? 'bg-gradient-to-br from-gray-900 to-black border border-gray-800 max-w-80'
+                      : isCurrentUser
+                        ? 'bg-gradient-to-br from-purple-600/30 to-blue-600/30 border border-blue-800/50 max-w-72'
+                        : 'bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 max-w-72'
+                      } rounded-xl shadow-md ${isCurrentUser ? 'rounded-tr-none' : 'rounded-tl-none'
+                      }`}
+                  >
+                    <small className='text-xs text-gray-400 mb-2 font-["Inter",sans-serif]'>
+                      {isAI ? 'AI Assistant' : getSenderEmail(msg.sender)}
+                    </small>
+                    <div style={{ margin: 4, fontSize: 18 }} className='text-sm text-gray-200'>
+                      {isAI
+                        ? WriteAiMessage(msg.message)
+                        : <p className="break-words font-['Inter',sans-serif]">{msg.message}</p>
+                      }
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              )
+            })}
           </div>
 
           <div style={{ padding: 8 }} className="inputField w-full flex absolute bottom-0 bg-gradient-to-r from-gray-900 to-black border-t border-gray-800">
@@ -682,7 +763,7 @@ server.listen(3000, () => {
               onChange={(e) => setMessage(e.target.value)}
               onKeyPress={(e) => {
                 if (e.key === 'Enter') {
-                  send();
+                  send()
                 }
               }}
               className='p-4 px-5 border-none outline-none flex-grow bg-transparent text-gray-300 font-["Inter",sans-serif]'
@@ -877,7 +958,7 @@ server.listen(3000, () => {
             {currentFile ? (
               <div className="code-editor-area h-full relative overflow-auto">
                 <textarea
-                  style={{color:'white'}}
+                  style={{ color: 'white' }}
                   value={fileTree[currentFile]?.file?.contents || ''}
                   onChange={(e) => {
                     const newFileTree = {
@@ -979,28 +1060,42 @@ server.listen(3000, () => {
               <h3 className="text-lg font-semibold text-gray-300 font-['Poppins',sans-serif]">Add Collaborators</h3>
             </div>
             <div className="modal-body p-4 max-h-80 overflow-y-auto">
-              <div className="users-list space-y-2">
-                {users.map((u, index) => (
-                  <div
-                    key={index}
-                    className={`user-item flex items-center gap-3 p-2 rounded cursor-pointer ${selectedUserId.has(u._id) ? 'bg-blue-900' : 'bg-gray-800 hover:bg-gray-700'
-                      } transition-colors duration-300`}
-                    onClick={() => handleUserClick(u._id)}
-                  >
-                    <div className="avatar w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
-                      <span className="text-white text-sm font-semibold">
-                        {u.email[0].toUpperCase()}
-                      </span>
+              {loading ? (
+                <div className="flex justify-center py-4">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                </div>
+              ) : error ? (
+                <div className="text-center py-4 text-red-400">
+                  {error}
+                </div>
+              ) : users.length > 0 ? (
+                <div className="users-list space-y-2">
+                  {users.map((u, index) => (
+                    <div
+                      key={u._id}
+                      className={`user-item flex items-center gap-3 p-2 rounded cursor-pointer ${selectedUserId.has(u._id) ? 'bg-blue-900' : 'bg-gray-800 hover:bg-gray-700'
+                        } transition-colors duration-300`}
+                      onClick={() => handleUserClick(u._id)}
+                    >
+                      <div className="avatar w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                        <span className="text-white text-sm font-semibold">
+                          {u.email[0].toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="user-info flex-grow">
+                        <p className="text-gray-300 text-sm font-['Inter',sans-serif]">{u.email}</p>
+                      </div>
+                      {selectedUserId.has(u._id) && (
+                        <i className="ri-check-line text-blue-400"></i>
+                      )}
                     </div>
-                    <div className="user-info flex-grow">
-                      <p className="text-gray-300 text-sm font-['Inter',sans-serif]">{u.email}</p>
-                    </div>
-                    {selectedUserId.has(u._id) && (
-                      <i className="ri-check-line text-blue-400"></i>
-                    )}
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-4 text-gray-400">
+                  No available users found to add as collaborators.
+                </div>
+              )}
             </div>
             <div className="modal-footer border-t border-gray-800 p-4 flex justify-end gap-3">
               <button
@@ -1012,6 +1107,7 @@ server.listen(3000, () => {
               <button
                 className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors duration-300 font-['Poppins',sans-serif]"
                 onClick={addCollaborators}
+                disabled={selectedUserId.size === 0 || loading}
               >
                 Add Selected
               </button>
@@ -1019,6 +1115,7 @@ server.listen(3000, () => {
           </motion.div>
         </div>
       )}
+
     </main>
   );
 };
