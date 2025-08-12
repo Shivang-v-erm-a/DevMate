@@ -1,13 +1,11 @@
-import Redis from 'ioredis';
+// Mocked Redis client for local/dev environment
+// import Redis from 'ioredis';
 
-const redisClient = new Redis({
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD,
-});
-
-redisClient.on('connect', () => {
-    console.log('Connected to Redis');
-});
+const redisClient = {
+    get: async () => null,
+    set: async () => null,
+    del: async () => null,
+    on: () => {},
+};
 
 export default redisClient;
