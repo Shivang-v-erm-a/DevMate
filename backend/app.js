@@ -12,8 +12,7 @@ const app = express();
 // Updated CORS with your actual Vercel URL
 app.use(cors({
   origin: [
-    'https://dev-mate-vufn-shivangs-projects-a06d8dc8.vercel.app', // Your actual Vercel URL
-    'https://dev-mate-vufn.vercel.app', // Alternative URL format
+    process.env.FRONTEND_URL || 'http://localhost:5173',
     'http://localhost:3000',
     'http://localhost:5173'
   ],
