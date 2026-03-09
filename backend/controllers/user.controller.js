@@ -14,6 +14,8 @@ export const createUserController = async (req, res) => {
         const user = await userService.createUser(req.body);
         const token = await user.generateJWT();
         delete user._doc.password; // Delete password from response at browser inspection
+
+        console.log('User created:', user, 'Token:', token); // Log the created user for debugging
         res.status(201).send({ user, token });
     }
     catch (error) {
@@ -32,6 +34,8 @@ export const loginController = async (req, res) => {
     try {
         const { email, password } = req.body;
         const user = await userModel.findOne({ email }).select('+password');
+        console.log(user);
+        
         if (!user) {
             return res.status(401).json({
                 errors: 'Invalid credentials'
