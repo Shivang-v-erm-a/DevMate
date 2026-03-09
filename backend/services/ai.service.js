@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai"
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_KEY);
 const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     generationConfig: {
         responseMimeType: "application/json",
         temperature: 0.4,
@@ -48,6 +48,7 @@ const model = genAI.getGenerativeModel({
                     "version": "1.0.0",
                     "main": "index.js",
                     "scripts": {
+
                         "test": "echo \"Error: no test specified\" && exit 1"
                     },
                     "keywords": [],
