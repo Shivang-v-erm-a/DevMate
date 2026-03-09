@@ -12,7 +12,7 @@ const app = express();
 // Updated CORS with your actual Vercel URL
 app.use(cors({
   origin: [
-    process.env.FRONTEND_URL || 'http://localhost:5173',
+     'https://dev-mate-qbyl.vercel.app' || 'http://localhost:5173',
     'http://localhost:3000',
     'http://localhost:5173'
   ],
